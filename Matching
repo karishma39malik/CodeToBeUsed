@@ -1,0 +1,259 @@
+import json
+import re
+import asyncio
+from typing import Any, Dict, List
+
+import ollama as ollama_client
+from sqlalchemy import text
+import structlog
+
+from agents.base_agent import BaseAgent
+from agents.scoring_engine import (
+score_relevance, score_skill_match, score_experience,
+calculate_penalties, compute_final_score,
+build_why_selected, build_why_rejected,
+detect_keyword_stuffing, detect_generic_cv,
+WEIGHTS, FORMULA_STR,
+)
+from shared.utils import truncate_text
+from config.settings import settings
+
+logger = structlog.get_logger(**name**)
+
+# Minimum embedding dimension — embeddings shorter than this are invalid
+
+MIN_EMBED_DIM = 10
+
+class MatchingAgent(BaseAgent):
+def **init**(self, db):
+super().**init**(“matching”, db)
+self.ollama = ollama_client.AsyncClient(host=settings.ollama_base_url)
+
+```
+def _vec_str(self, vec: List[float]) -> str:
+    return "[" + ",".join(str(float(x)) for x in vec) + "]"
+
+async def execute(self, payload: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
+    cv_version_id   = payload["cv_version_id"]
+    job_id          = payload["job_id"]
+    parsed_cv       = payload["parsed_cv"]
+    job_description = payload["job_description"]
+    jd_requirements = payload.get("jd_requirements", {})
+
+    # ── Step 1: Build CV text for embedding ──────────────────────
+    cv_text = self._cv_to_text(parsed_cv)
+
+    # FIX: if parsed_cv was empty (LLM failed at ingestion),
+    # fall back to a minimal text so we always get a valid embedding.
+    if not cv_text or len(cv_text.strip()) < 10:
+        cv_text = (
+            f"CV file. "
+            f"Skills: {', '.join(parsed_cv.get('technical_skills', []) or [])}. "
+            f"Experience: {parsed_cv.get('total_years_exp', 0)} years."
+        )
+
+    # ── Step 2: Get JD embedding (from DB cache or Ollama) ───────
+    jd_row = await self.db.execute(
+        text("SELECT embedding::text FROM jobs WHERE id=:id"), {"id": job_id})
+    jd_db = jd_row.fetchone()
+
+    if jd_db and jd_db[0]:
+        raw_vals = jd_db[0].strip("[]").split(",")
+        jd_embed = [float(x) for x in raw_vals if x.strip()]
+    else:
+        jd_embed = await self._embed(truncate_text(job_description, 4000))
+
+    # FIX: validate JD embedding before proceeding
+    if not jd_embed or len(jd_embed) < MIN_EMBED_DIM:
+        self.log.error("jd_embedding_invalid", length=len(jd_embed) if jd_embed else 0)
+        jd_embed = None
+
+    # ── Step 3: Get CV embedding ──────────────────────────────────
+    cv_embed = await self._embed(cv_text)
+
+    # FIX: validate CV embedding — if Ollama returns [] or None, skip DB write
+    cv_embed_valid = cv_embed and len(cv_embed) >= MIN_EMBED_DIM
+
+    cosine = 0.0
+    try:
+        if cv_embed_valid and jd_embed:
+            cv_vec = self._vec_str(cv_embed)
+            jd_vec = self._vec_str(jd_embed)
+
+            # Only write embedding to DB if it's valid
+            await self.db.execute(
+                text("UPDATE cv_versions SET embedding=:e WHERE id=:id"),
+                {"e": cv_vec, "id": cv_version_id})
+
+            sim_row = await self.db.execute(
+                text("SELECT 1-(embedding<=>:jd) AS sim FROM cv_versions WHERE id=:id"),
+                {"jd": jd_vec, "id": cv_version_id})
+            row = sim_row.fetchone()
+            cosine = max(0.0, min(1.0, float(row.sim or 0.0))) if row else 0.0
+        else:
+            self.log.warning("embedding_invalid_skipping_vector_ops",
+                             cv_valid=cv_embed_valid,
+                             jd_valid=bool(jd_embed))
+    except Exception as e:
+        await self.db.rollback()
+        self.log.error("vector_op_failed", error=str(e))
+        # Don't raise — continue with cosine=0.0 so pipeline completes
+
+    # ── Step 4: Rule-based scoring ────────────────────────────────
+    required_skills = jd_requirements.get("required_skills", []) or []
+    nice_skills     = jd_requirements.get("nice_skills", []) or []
+    required_years  = float(jd_requirements.get("min_years", 0) or 0)
+    cv_years        = parsed_cv.get("total_years_exp") or 0
+
+    rel_score = score_relevance(cosine)
+    skill_s, matched, missing = score_skill_match(
+        (parsed_cv.get("technical_skills") or []) +
+        (parsed_cv.get("domain_expertise") or []),
+        required_skills, nice_skills,
+    )
+    exp_score = score_experience(cv_years, required_years)
+
+    # ── Step 5: LLM semantic reasoning ───────────────────────────
+    semantic_s, domain_mismatch, llm_rationale, strengths, gaps, transferable = \
+        await self._llm_analyze(parsed_cv, job_description, matched, missing)
+
+    # ── Step 6: Penalties ─────────────────────────────────────────
+    has_skills = len(parsed_cv.get("technical_skills") or []) > 0
+    kw_stuffed = detect_keyword_stuffing(
+        parsed_cv.get("cv_summary", "") or "",
+        parsed_cv.get("technical_skills") or [])
+    is_generic = detect_generic_cv(parsed_cv)
+
+    penalty, penalties_applied = calculate_penalties(
+        missing_critical=missing[:3],
+        cv_years=cv_years,
+        required_years=required_years,
+        domain_mismatch=domain_mismatch,
+        keyword_stuffed=kw_stuffed,
+        has_skills=has_skills,
+        is_generic=is_generic,
+    )
+
+    # ── Step 7: Final score ───────────────────────────────────────
+    final = compute_final_score(rel_score, skill_s, exp_score, semantic_s, penalty)
+
+    why_sel = build_why_selected(matched, exp_score, rel_score, semantic_s)
+    why_rej = build_why_rejected(missing, exp_score, penalty, domain_mismatch)
+
+    score_reasoning = (
+        f"Final Score: {final}/100\n"
+        f"  Relevance  ({WEIGHTS['relevance']}%):   {rel_score}/100  [cosine={cosine:.3f}]\n"
+        f"  Skill Match({WEIGHTS['skill_match']}%): {skill_s}/100  "
+        f"[matched={len(matched)}, missing={len(missing)}]\n"
+        f"  Experience ({WEIGHTS['experience']}%):  {exp_score}/100  "
+        f"[cv={cv_years}yr vs req={required_years}yr]\n"
+        f"  Semantic   ({WEIGHTS['semantic']}%):   {semantic_s}/100\n"
+        f"  Penalties: -{penalty}\n"
+        f"  Applied: {[p['reason'] for p in penalties_applied]}\n"
+        f"  LLM Rationale: {llm_rationale}"
+    )
+
+    self.log.info("matching_complete",
+                  final=final, cosine=round(cosine, 3),
+                  skill=skill_s, exp=exp_score, penalty=penalty,
+                  embed_valid=cv_embed_valid)
+
+    return {
+        "final_score":         final,
+        "relevance_score":     rel_score,
+        "skill_match_score":   skill_s,
+        "experience_score":    exp_score,
+        "semantic_score":      semantic_s,
+        "penalty_score":       penalty,
+        "semantic_similarity": round(cosine, 4),
+        "matched_skills":      matched,
+        "missing_skills":      missing,
+        "strengths":           strengths,
+        "gaps":                gaps,
+        "transferable_skills": transferable,
+        "why_selected":        why_sel,
+        "why_rejected":        why_rej,
+        "score_formula":       FORMULA_STR,
+        "score_weights":       WEIGHTS,
+        "penalties_applied":   penalties_applied,
+        "score_reasoning":     score_reasoning,
+        "llm_rationale":       llm_rationale,
+        "domain_mismatch":     domain_mismatch,
+    }
+
+# ── Helpers ───────────────────────────────────────────────────────
+
+async def _embed(self, text_str: str) -> List[float]:
+    """
+    FIX: Explicitly guard against empty text before calling Ollama.
+    Ollama returns [] for empty prompts which crashes pgvector.
+    """
+    if not text_str or not text_str.strip():
+        self.log.warning("embed_called_with_empty_text")
+        return []
+    try:
+        resp = await self.ollama.embeddings(
+            model=settings.ollama_embed_model,
+            prompt=text_str.strip(),
+        )
+        emb = resp.get("embedding") or []
+        if not emb:
+            self.log.warning("ollama_returned_empty_embedding")
+        return emb
+    except Exception as e:
+        self.log.error("embed_failed", error=str(e))
+        return []
+
+def _cv_to_text(self, cv: dict) -> str:
+    parts = []
+    if cv.get("cv_summary"):
+        parts.append(cv["cv_summary"])
+    tech = ", ".join(cv.get("technical_skills") or [])
+    if tech: parts.append(f"Skills: {tech}")
+    dom = ", ".join(cv.get("domain_expertise") or [])
+    if dom: parts.append(f"Domain: {dom}")
+    for exp in (cv.get("experience") or [])[:4]:
+        role    = exp.get("role", "") if isinstance(exp, dict) else ""
+        company = exp.get("company", "") if isinstance(exp, dict) else ""
+        desc    = exp.get("description", "") if isinstance(exp, dict) else ""
+        parts.append(f"{role} at {company}: {desc}")
+    return "\n".join(parts)
+
+async def _llm_analyze(self, parsed_cv, job_desc, matched, missing):
+    cv_s = self._cv_to_text(parsed_cv)
+    prompt = (
+        'You are a strict JSON generator. Respond ONLY with valid JSON.\n'
+        'Schema: {"semantic_score":50,"domain_mismatch":false,"rationale":"string",'
+        '"strengths":[],"gaps":[],"transferable":[]}\n'
+        'Rules: semantic_score 0-100. domain_mismatch true only if completely different field. '
+        'Max 4 items per list.\n'
+        f"JD: {truncate_text(job_desc, 1200)}\n"
+        f"CV: {cv_s[:800]}\n"
+        f"Matched: {matched[:5]}\n"
+        f"Missing: {missing[:5]}"
+    )
+    try:
+        resp = await self.ollama.chat(
+            model=settings.ollama_llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            format="json",
+            options={"temperature": 0.1, "num_predict": 500},
+        )
+        raw = resp["message"]["content"]
+        if isinstance(raw, str):
+            raw = json.loads(raw) if raw.strip() else {}
+        if not raw:
+            raise ValueError("Empty LLM response")
+        sem = min(100, max(0, int(raw.get("semantic_score", 50))))
+        return (
+            sem,
+            bool(raw.get("domain_mismatch", False)),
+            raw.get("rationale", ""),
+            raw.get("strengths", []),
+            raw.get("gaps", []),
+            raw.get("transferable", []),
+        )
+    except Exception as e:
+        self.log.error("llm_analyze_failed", error=str(e))
+        return 40, False, f"LLM error: {e}", [], [], []
+```
