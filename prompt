@@ -128,15 +128,16 @@ asyncio.gather()
 background tasks
 2. LLM Optimization
 Reduce prompt tokens
-Use smaller Ollama model (phi3 / gemma 2b preferred)
+Use Ollama model (pefect for my scenario , alos i need better resultsw)
 Cache repeated embeddings
 3. Pipeline Optimization
 
 Split into stages:
 
-Fast filtering (rule-based)
+Fast filtering (rule-based) , be intelligent enpugh to understand from full sentence what candidate actually needs
+try to keep the 3 agents used in the code potential matching and validation
 Embedding match
-LLM reasoning only for top candidates
+LLM reasoning only for all candidates
 🧪 NEGATIVE SCENARIO TESTING (MANDATORY)
 
 System MUST handle:
@@ -184,6 +185,9 @@ Skill gaps
 Full explanation
 Timeline history of score changes
 🧠 INTELLIGENT AI BEHAVIOR
+email 
+contact details
+
 
 AI must:
 
