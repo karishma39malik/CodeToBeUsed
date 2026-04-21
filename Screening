@@ -1,0 +1,309 @@
+import streamlit as st
+import requests
+import os
+import sys
+import json
+import time
+sys.path.insert(0, “/app/frontend”)
+from shared_style import (CSS, topnav, sidebar_nav, badge_html, parse_list,
+score_color, score_bar_html, score_breakdown_bar, gauge, radar, waterfall,
+pool_bar, donut, PLOTLY_CFG, TECH_KW, initials, FB_BLUE, FB_GREEN, FB_ORANGE, FB_RED)
+
+st.set_page_config(page_title=“Screening Results · TalentScan”, page_icon=“📊”, layout=“wide”)
+st.markdown(CSS, unsafe_allow_html=True)
+API = os.getenv(“API_URL”,“http://api:8000”) + “/api/v1”
+
+with st.sidebar:
+sidebar_nav(“results”)
+st.markdown(’<div style="height:1px;background:#E4E6EB;margin:1rem 0;"></div>’, unsafe_allow_html=True)
+try:
+jobs = requests.get(f”{API}/jobs/”, timeout=5).json()
+if not isinstance(jobs, list): jobs = []
+job_map = {j[“title”]: j[“id”] for j in jobs}
+except Exception:
+job_map = {}
+if not job_map:
+st.warning(“No jobs found.”); st.stop()
+sel_label = st.selectbox(“Role”, list(job_map.keys()))
+sel_jid   = job_map[sel_label]
+min_score = st.slider(“Min Score”, 0, 100, 0, 5)
+show_lim  = st.slider(“Max Candidates”, 10, 200, 50, 10)
+dec_filter= st.multiselect(“Decision Filter”,
+[“auto_shortlisted”,“auto_rejected”,“needs_review”,“hr_approved”,“hr_hold”,“hr_rejected”,“forwarded”],
+default=[“auto_shortlisted”,“needs_review”,“hr_approved”,“hr_hold”])
+view_mode = st.radio(“View”, [“📋 Ranked List”,“🗂 Kanban Board”], index=0)
+st.markdown(’<div style="height:1px;background:#E4E6EB;margin:1rem 0;"></div>’, unsafe_allow_html=True)
+if st.button(“↻  Refresh”, use_container_width=True): st.rerun()
+
+st.markdown(topnav(f”Screening Results · {sel_label}”), unsafe_allow_html=True)
+
+try:
+resp = requests.get(f”{API}/screenings/results/{sel_jid}”,
+params={“min_score”:min_score,“limit”:show_lim}, timeout=15)
+all_results = resp.json() if resp.status_code == 200 else []
+if not isinstance(all_results, list): all_results = []
+except Exception as e:
+st.error(f”API error: {e}”); st.stop()
+
+results = [r for r in all_results if not dec_filter or r.get(“decision”) in dec_filter]
+
+try:
+pipe = requests.get(f”{API}/jobs/{sel_jid}/pipeline”, timeout=5).json()
+except Exception:
+pipe = {}
+
+# Metrics
+
+total_s = pipe.get(“total_screened”, len(all_results))
+shortl  = pipe.get(“shortlisted”, sum(1 for r in all_results if r.get(“final_score”,0)>=70))
+intv    = pipe.get(“interview”, 0)
+pend    = pipe.get(“pending_review”, sum(1 for r in all_results if r.get(“decision”)==“needs_review”))
+avg_s   = pipe.get(“avg_score”) or 0
+
+m1,m2,m3,m4,m5 = st.columns(5)
+m1.metric(“Total”, total_s); m2.metric(“Shortlisted”, shortl)
+m3.metric(“Interview”, intv); m4.metric(“Pending”, pend)
+m5.metric(“Avg Score”, f”{int(avg_s) if avg_s else ‘—’}/100”)
+
+# Pool charts
+
+if all_results:
+cc1,cc2 = st.columns([3,2], gap=“medium”)
+with cc1:
+st.markdown(’<div class="fb-card-lg"><div class="sec-label">Candidate Scores</div>’, unsafe_allow_html=True)
+fig = pool_bar(sorted(all_results,key=lambda x:x.get(“final_score”,0),reverse=True)[:20])
+if fig: st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CFG)
+st.markdown(”</div>”, unsafe_allow_html=True)
+with cc2:
+st.markdown(’<div class="fb-card-lg"><div class="sec-label">Decision Breakdown</div>’, unsafe_allow_html=True)
+st.plotly_chart(donut(all_results), use_container_width=True, config=PLOTLY_CFG)
+st.markdown(”</div>”, unsafe_allow_html=True)
+
+if not results:
+st.markdown(’<div class="fb-card" style="text-align:center;padding:3rem;"><div style="font-size:2rem;margin-bottom:.5rem;">🔍</div><div style="font-weight:700;">No candidates match current filters</div></div>’, unsafe_allow_html=True)
+st.stop()
+
+st.markdown(’<div class="divider"></div>’, unsafe_allow_html=True)
+
+# ── KANBAN VIEW ──
+
+if “Kanban” in view_mode:
+stages = [(“new”,“🆕 New”),(“screening”,“🔍 Screening”),(“shortlisted”,“✅ Shortlisted”),
+(“interview”,“🎤 Interview”),(“rejected”,“❌ Rejected”)]
+cols = st.columns(len(stages), gap=“small”)
+stage_map = {}
+for r in all_results:
+s = r.get(“ats_stage”,“screening”)
+stage_map.setdefault(s,[]).append(r)
+for col,(stage_key,stage_label) in zip(cols,stages):
+with col:
+items = stage_map.get(stage_key,[])
+col_color = {“new”:”#65676B”,“screening”:”#1877F2”,“shortlisted”:”#42B72A”,“interview”:”#F5A623”,“rejected”:”#FA3E3E”}.get(stage_key,”#65676B”)
+st.markdown(f’<div class="kanban-col"><div class="kanban-header" style="color:{col_color};border-bottom-color:{col_color};">{stage_label} ({len(items)})</div>’, unsafe_allow_html=True)
+for r in items[:15]:
+name  = r.get(“full_name”) or “Unknown”
+score = r.get(“final_score”,0)
+sc    = score_color(score)
+ini   = initials(name)
+st.markdown(f’<div class="kanban-card"><div style="display:flex;justify-content:space-between;align-items:center;"><div style="display:flex;align-items:center;gap:6px;min-width:0;"><div style="width:24px;height:24px;border-radius:50%;background:#1877F2;color:white;font-size:.6rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{ini}</div><div class="kanban-name" style="min-width:0;">{name}</div></div><span class="kanban-score" style="color:{sc};flex-shrink:0;">{score}</span></div><div class="kanban-meta">{r.get(“original_filename”,””)[:22]}</div></div>’, unsafe_allow_html=True)
+# Move stage buttons
+c1, c2 = st.columns(2)
+with c1:
+if stage_key != “shortlisted” and st.button(“✓”, key=f”sl_{r.get(‘id’,’’)}*{stage_key}”, help=“Shortlist”):
+requests.patch(f”{API}/screenings/{r[‘id’]}/stage”, data={“stage”:“shortlisted”,“moved_by”:“HR”}, timeout=5)
+st.rerun()
+with c2:
+if stage_key != “rejected” and st.button(“✕”, key=f”rj*{r.get(‘id’,’’)}_{stage_key}”, help=“Reject”):
+requests.patch(f”{API}/screenings/{r[‘id’]}/stage”, data={“stage”:“rejected”,“moved_by”:“HR”}, timeout=5)
+st.rerun()
+st.markdown(”</div>”, unsafe_allow_html=True)
+
+# ── RANKED LIST VIEW ──
+
+else:
+for i, r in enumerate(results, 1):
+name    = r.get(“full_name”) or r.get(“original_filename”) or “Unknown”
+email   = r.get(“email”) or “”
+fname   = r.get(“original_filename”) or “”
+decision= r.get(“decision”) or “needs_review”
+stage   = r.get(“ats_stage”) or “screening”
+ts      = (r.get(“screened_at”) or “”)[:16].replace(“T”,” “)
+score   = r.get(“final_score”,0)
+rel     = r.get(“relevance_score”,0)
+skill   = r.get(“skill_match_score”,0)
+exp     = r.get(“experience_score”,0)
+sem     = r.get(“semantic_score”,0)
+pen     = r.get(“penalty_score”,0)
+pot     = r.get(“potential_score”,0)
+anoms   = r.get(“anomaly_count”,0)
+sid     = r.get(“id”,””)
+ini     = initials(name)
+sc      = score_color(score)
+
+```
+    matched   = parse_list(r.get("matched_skills",[]))
+    missing   = parse_list(r.get("missing_skills",[]))
+    strengths = parse_list(r.get("strengths",[]))
+    gaps      = parse_list(r.get("gaps",[]))
+    transferable = parse_list(r.get("transferable_skills",[]))
+    insights  = parse_list(r.get("value_add_insights",[]))
+    rationale = r.get("llm_rationale") or ""
+    why_sel   = r.get("why_selected") or ""
+    why_rej   = r.get("why_rejected") or ""
+    reasoning = r.get("score_reasoning") or ""
+    penalties = parse_list(r.get("penalties_applied",[]))
+
+    # Header card
+    st.markdown(f"""<div class="fb-card-lg">
+      <div style="display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid #E4E6EB;margin-bottom:14px;">
+        <div style="width:52px;height:52px;border-radius:50%;background:#1877F2;color:white;font-weight:700;font-size:1.1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;">{ini}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:1.3rem;font-weight:700;color:#050505;">#{i} &nbsp;{name}</div>
+          <div style="font-size:.82rem;color:#65676B;margin-top:2px;">{email}</div>
+          <div style="font-size:.75rem;color:#BCC0C4;">{fname} · {ts}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+          {badge_html(decision)}
+          <div style="font-size:1.8rem;font-weight:900;color:{sc};">{score}<span style="font-size:.9rem;color:#65676B;">/100</span></div>
+          {f"<span class='badge badge-red'>⚑ {anoms} Flag{'s' if anoms!=1 else ''}</span>" if anoms else ""}
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # Score Intelligence
+    with st.expander(f"📊  Score Intelligence — {name}", expanded=(i==1)):
+        gc1,gc2,gc3 = st.columns(3, gap="medium")
+        with gc1:
+            st.markdown('<div class="sec-label">Composite Gauge</div>', unsafe_allow_html=True)
+            st.plotly_chart(gauge(score,"Final Score"), use_container_width=True, config=PLOTLY_CFG)
+        with gc2:
+            st.markdown('<div class="sec-label">Score Radar</div>', unsafe_allow_html=True)
+            st.plotly_chart(radar(rel,skill,exp,sem,pot), use_container_width=True, config=PLOTLY_CFG)
+        with gc3:
+            st.markdown('<div class="sec-label">Score Waterfall</div>', unsafe_allow_html=True)
+            st.plotly_chart(waterfall(rel,skill,exp,sem,pen,score), use_container_width=True, config=PLOTLY_CFG)
+
+        st.markdown(f"""<div class="fb-card">
+          <div class="sec-label">Score Breakdown with Weights</div>
+          {score_bar_html("Relevance Score",      rel,  "· 30% — embedding similarity")}
+          {score_bar_html("Skill Match Score",    skill,"· 25% — rule-based overlap")}
+          {score_bar_html("Experience Score",     exp,  "· 20% — years vs requirement")}
+          {score_bar_html("Semantic Score",       sem,  "· 25% — LLM reasoning")}
+          {score_bar_html("Potential Score",      pot,  "· bonus signal")}
+          <div style="margin-top:8px;background:#FFEBEE;border-radius:6px;padding:8px 10px;font-size:.78rem;color:#C62828;">
+            ⚠ Penalty applied: <b>-{pen} pts</b>
+            {"  ·  " + "  ·  ".join(p["reason"] if isinstance(p,dict) else str(p) for p in penalties[:3]) if penalties else "  ·  None"}
+          </div>
+          <div style="margin-top:8px;font-size:.72rem;color:#BCC0C4;background:#F8F9FA;border-radius:6px;padding:8px 10px;font-family:monospace;">
+            ({rel}×.30) + ({skill}×.25) + ({exp}×.20) + ({sem}×.25) − {pen} = <b>{score}</b>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Interactive horizontal bar chart for score components
+        st.markdown('<div class="sec-label" style="margin-top:1rem;">Score Component Chart</div>', unsafe_allow_html=True)
+        st.plotly_chart(
+            score_breakdown_bar({
+                "Relevance (×30%)":   rel,
+                "Skill Match (×25%)": skill,
+                "Experience (×20%)":  exp,
+                "Semantic (×25%)":    sem,
+                "Potential":          pot,
+            }),
+            use_container_width=True, config=PLOTLY_CFG
+        )
+
+        if reasoning:
+            st.markdown(f'<div class="sec-label" style="margin-top:1rem;">Full Score Trace</div><div class="score-trace">{reasoning}</div>', unsafe_allow_html=True)
+
+    # Why Selected / Rejected
+    with st.expander(f"💡  Why Selected / Rejected — {name}"):
+        wc1,wc2 = st.columns(2, gap="medium")
+        with wc1:
+            st.markdown(f'<div class="sg-box sg-box-s"><div class="sg-box-label sg-label-s">✓ Why Selected</div><div style="font-size:.82rem;color:#1B5E20;line-height:1.7;">{why_sel or "—"}</div></div>', unsafe_allow_html=True)
+        with wc2:
+            st.markdown(f'<div class="sg-box sg-box-g"><div class="sg-box-label sg-label-g">✕ Why Rejected / Gaps</div><div style="font-size:.82rem;color:#BF360C;line-height:1.7;">{why_rej or "—"}</div></div>', unsafe_allow_html=True)
+
+        s_rows = "".join(f'<div class="sg-item"><span class="sg-bullet-s">▲</span><span class="sg-text-s">{s}</span></div>' for s in strengths) or "<div style='font-size:.8rem;color:#BCC0C4;'>None identified</div>"
+        g_rows = "".join(f'<div class="sg-item"><span class="sg-bullet-g">▼</span><span class="sg-text-g">{g}</span></div>' for g in gaps) or "<div style='font-size:.8rem;color:#BCC0C4;'>None identified</div>"
+        st.markdown(f'<div class="sg-grid" style="margin-top:12px;"><div class="sg-box sg-box-s"><div class="sg-box-label sg-label-s">Strengths ({len(strengths)})</div>{s_rows}</div><div class="sg-box sg-box-g"><div class="sg-box-label sg-label-g">Gaps ({len(gaps)})</div>{g_rows}</div></div>', unsafe_allow_html=True)
+
+        if matched:
+            chips = "".join(f'<span class="chip chip-tech">{s}</span>' for s in matched[:10])
+            st.markdown(f'<div class="sec-label" style="margin-top:12px;">Matched Skills ({len(matched)})</div><div class="chip-wrap">{chips}</div>', unsafe_allow_html=True)
+        if missing:
+            chips = "".join(f'<span class="chip chip-miss">{s}</span>' for s in missing[:10])
+            st.markdown(f'<div class="sec-label" style="margin-top:8px;">Missing Skills ({len(missing)})</div><div class="chip-wrap">{chips}</div>', unsafe_allow_html=True)
+
+    # Transferable Skills
+    if transferable:
+        with st.expander(f"🔄  Transferable Skills — {name}"):
+            tech_s   = [s for s in transferable if any(kw in s.lower() for kw in TECH_KW)]
+            domain_s = [s for s in transferable if s not in tech_s]
+            tc1, tc2 = st.columns(2, gap="medium")
+            with tc1:
+                st.markdown('<div class="sec-label">Technical</div>', unsafe_allow_html=True)
+                chips = "".join(f'<span class="chip chip-tech">{s}</span>' for s in tech_s) \
+                        or "<span style='font-size:.8rem;color:#BCC0C4;'>None identified</span>"
+                st.markdown(f'<div class="chip-wrap">{chips}</div>', unsafe_allow_html=True)
+            with tc2:
+                st.markdown('<div class="sec-label">Domain</div>', unsafe_allow_html=True)
+                chips = "".join(f'<span class="chip" style="background:#F3E8FF;color:#6B2FA0;border:1px solid #DDB8FA;">{s}</span>' for s in domain_s) \
+                        or "<span style='font-size:.8rem;color:#BCC0C4;'>None identified</span>"
+                st.markdown(f'<div class="chip-wrap">{chips}</div>', unsafe_allow_html=True)
+
+    # Value-Add Insights
+    if insights:
+        with st.expander(f"💡  Strategic Insights — {name}"):
+            for idx, ins in enumerate(insights, 1):
+                st.markdown(f'<div class="insight-item"><div class="insight-num">Insight {idx:02d}</div>{ins}</div>', unsafe_allow_html=True)
+
+    # AI Rationale
+    if rationale:
+        with st.expander(f"🧠  AI Rationale — {name}"):
+            st.markdown(f'<div class="rationale-box"><div class="rationale-label">🔵 AI Decision Rationale</div>{rationale}<div style="margin-top:10px;font-size:.7rem;color:#BCC0C4;font-style:normal;">Generated by LLM pipeline · For HR augmentation only</div></div>', unsafe_allow_html=True)
+
+    # HR Decision
+    with st.expander(f"✍️  HR Decision — {name}"):
+        dm = {"✅ Approve":"hr_approved","📤 Forward to Interview":"forwarded",
+              "⏸ Hold":"hr_hold","❌ Reject":"hr_rejected"}
+        da,db_,dc = st.columns([2,2,1], gap="medium")
+        with da:
+            choice = st.selectbox("Decision", list(dm.keys()), key=f"dec_{sid}")
+        with db_:
+            hr_name = st.text_input("HR Officer", placeholder="Your full name", key=f"name_{sid}")
+        with dc:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Save", key=f"save_{sid}", use_container_width=True):
+                if not hr_name.strip():
+                    st.error("Name required")
+                else:
+                    try:
+                        p = requests.patch(f"{API}/screenings/{sid}/decision",
+                            data={"decision":dm[choice],"decision_by":hr_name.strip()}, timeout=10)
+                        if p.status_code == 200:
+                            st.success("✅ Saved"); time.sleep(1); st.rerun()
+                        else:
+                            st.error(p.json().get("detail","Error"))
+                    except Exception as ex:
+                        st.error(str(ex))
+
+    # Export button
+    with st.expander(f"📥  Export Profile — {name}"):
+        st.markdown('<div style="font-size:.8rem;color:#65676B;margin-bottom:8px;">Download full Excel candidate report including score breakdown, reasoning trace, skill gap analysis, and penalty details.</div>', unsafe_allow_html=True)
+        try:
+            from export_utils import generate_excel_report
+            import io
+            buf = io.BytesIO()
+            generate_excel_report([r], buf)
+            buf.seek(0)
+            st.download_button(
+                label="⬇️ Download Excel Profile",
+                data=buf.getvalue(),
+                file_name=f"profile_{name.replace(' ','_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+        except Exception as e:
+            st.warning(f"Export not available: {e}")
+
+    st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+```
