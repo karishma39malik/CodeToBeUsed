@@ -1,0 +1,196 @@
+import json
+import re
+import hashlib
+from typing import Any, Dict
+import pdfplumber
+import docx
+import chardet
+import ollama as ollama_client
+
+from agents.base_agent import BaseAgent
+from shared.models import ParsedCV
+from shared.utils import truncate_text, get_file_extension
+from config.settings import settings
+
+class IngestionAgent(BaseAgent):
+def **init**(self, db):
+super().**init**(“ingestion”, db)
+self.ollama = ollama_client.AsyncClient(host=settings.ollama_base_url)
+
+```
+async def execute(self, payload: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
+    file_path = payload["file_path"]
+    filename  = payload["filename"]
+    ext       = get_file_extension(filename)
+
+    raw_text, warnings = await self._extract_text(file_path, ext)
+    if not raw_text or len(raw_text.strip()) < 30:
+        raise ValueError(f"Cannot extract text from {filename}")
+
+    with open(file_path, "rb") as f:
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+
+    parsed = await self._llm_extract(truncate_text(raw_text, 5000), raw_text, warnings)
+    return {
+        "parsed_cv":      parsed.model_dump(),
+        "raw_text":       raw_text,
+        "file_hash":      file_hash,
+        "file_format":    ext,
+        "parse_warnings": warnings,
+    }
+
+# ── Text extraction ───────────────────────────────────────────────
+async def _extract_text(self, path, ext):
+    w = []
+    if ext == "pdf":
+        try:
+            parts = []
+            with pdfplumber.open(path) as pdf:
+                for i, pg in enumerate(pdf.pages):
+                    t = pg.extract_text()
+                    if t: parts.append(t)
+                    else: w.append(f"Page {i+1} no text")
+            return "\n".join(parts), w
+        except Exception as e:
+            w.append(str(e)); return "", w
+    elif ext == "docx":
+        try:
+            doc = docx.Document(path)
+            paras = [p.text for p in doc.paragraphs if p.text.strip()]
+            for tbl in doc.tables:
+                for row in tbl.rows:
+                    r = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                    if r: paras.append(r)
+            return "\n".join(paras), w
+        except Exception as e:
+            w.append(str(e)); return "", w
+    elif ext == "txt":
+        try:
+            raw = open(path, "rb").read()
+            enc = chardet.detect(raw).get("encoding", "utf-8") or "utf-8"
+            return raw.decode(enc, errors="replace"), w
+        except Exception as e:
+            w.append(str(e)); return "", w
+    return "", w
+
+# ── LLM extraction with 3-level fallback ─────────────────────────
+async def _llm_extract(self, text: str, raw_text: str, warnings: list) -> ParsedCV:
+    """
+    FIX: Three-level strategy so pipeline NEVER dies due to empty LLM response.
+    Level 1 — Full structured prompt
+    Level 2 — Minimal fallback prompt with format=json (forces non-empty response)
+    Level 3 — Pure rule-based regex (no LLM, always works)
+    """
+
+    # ── Level 1: Full extraction ──────────────────────────────────
+    prompt1 = (
+        "Extract CV data. Return ONLY valid JSON, no markdown, no explanation.\n"
+        "{\n"
+        '  "full_name": null,\n'
+        '  "email": null,\n'
+        '  "phone": null,\n'
+        '  "location": null,\n'
+        '  "technical_skills": [],\n'
+        '  "soft_skills": [],\n'
+        '  "domain_expertise": [],\n'
+        '  "certifications": [],\n'
+        '  "languages": [],\n'
+        '  "experience": [],\n'
+        '  "education": [],\n'
+        '  "total_years_exp": null,\n'
+        '  "cv_summary": null,\n'
+        '  "parse_confidence": 0.8\n'
+        "}\n"
+        f"CV TEXT:\n{text}"
+    )
+    try:
+        resp = await self.ollama.chat(
+            model=settings.ollama_llm_model,
+            messages=[{"role": "user", "content": prompt1}],
+            options={"temperature": 0.0, "num_predict": 1500},
+        )
+        raw = (resp["message"]["content"] or "").strip()
+        raw = re.sub(r"```json\s*", "", raw)
+        raw = re.sub(r"```\s*", "", raw)
+        if raw:                          # FIX: guard against empty response
+            data = json.loads(raw)
+            return ParsedCV(**data)
+    except Exception as e:
+        warnings.append(f"LLM level-1 failed: {e}")
+
+    # ── Level 2: Minimal fallback with format=json ────────────────
+    prompt2 = (
+        'Return JSON only. Schema: {"full_name":null,"email":null,'
+        '"technical_skills":[],"total_years_exp":null,'
+        '"cv_summary":null,"parse_confidence":0.6}\n'
+        f"CV:\n{text[:2000]}"
+    )
+    try:
+        resp2 = await self.ollama.chat(
+            model=settings.ollama_llm_model,
+            messages=[{"role": "user", "content": prompt2}],
+            format="json",                # forces non-empty JSON response
+            options={"temperature": 0.0, "num_predict": 600},
+        )
+        raw2 = resp2["message"]["content"]
+        if isinstance(raw2, str):
+            raw2 = json.loads(raw2) if raw2.strip() else {}
+        if raw2:
+            return ParsedCV(
+                full_name        = raw2.get("full_name"),
+                email            = raw2.get("email"),
+                technical_skills = raw2.get("technical_skills") or [],
+                total_years_exp  = raw2.get("total_years_exp"),
+                cv_summary       = raw2.get("cv_summary"),
+                parse_confidence = float(raw2.get("parse_confidence") or 0.6),
+                parse_warnings   = warnings,
+            )
+    except Exception as e:
+        warnings.append(f"LLM level-2 failed: {e}")
+
+    # ── Level 3: Rule-based regex — always succeeds ───────────────
+    warnings.append("Using rule-based fallback extraction (LLM unavailable)")
+    return self._rule_based_extract(raw_text, warnings)
+
+def _rule_based_extract(self, raw_text: str, warnings: list) -> ParsedCV:
+    """Pure regex extraction — no LLM. Always returns a usable ParsedCV."""
+    t = raw_text or ""
+
+    email_m = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", t)
+    phone_m = re.search(r"(\+?\d[\d\s\-().]{7,15}\d)", t)
+    yoe_m   = re.search(r"(\d+)\+?\s*years?\s*(?:of\s+)?(?:experience|exp)", t, re.I)
+
+    SKILLS = [
+        "Python","SQL","Java","Scala","Spark","Kafka","Airflow","dbt","Databricks",
+        "Azure","AWS","GCP","Docker","Kubernetes","Terraform","Redis","PostgreSQL",
+        "MongoDB","Snowflake","BigQuery","Redshift","Tableau","Power BI",
+        "Machine Learning","Deep Learning","NLP","TensorFlow","PyTorch",
+        "pandas","NumPy","scikit-learn","React","Node.js","Go","Rust","C++","C#",
+    ]
+    found = [s for s in SKILLS if s.lower() in t.lower()]
+
+    name = None
+    for line in t.split("\n")[:10]:
+        line = line.strip()
+        if re.match(r"^[A-Z][a-z]+ +[A-Z][a-z]+", line) and len(line.split()) <= 5:
+            name = line
+            break
+
+    summary = None
+    for para in t.split("\n\n")[:5]:
+        para = para.strip()
+        if len(para) > 60 and not re.match(r"^[A-Z ]+$", para):
+            summary = para[:300]
+            break
+
+    return ParsedCV(
+        full_name        = name,
+        email            = email_m.group(0) if email_m else None,
+        phone            = phone_m.group(0).strip() if phone_m else None,
+        technical_skills = found,
+        total_years_exp  = float(yoe_m.group(1)) if yoe_m else None,
+        cv_summary       = summary,
+        parse_confidence = 0.45 if (found or email_m) else 0.2,
+        parse_warnings   = warnings,
+    )
+```
