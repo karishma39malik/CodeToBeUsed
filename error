@@ -1,0 +1,63 @@
+cv_api           | 2026-04-21 07:47:36,099 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+postgres-1       | 2026-04-21 07:47:36.128 UTC [228] CONTEXT:  unnamed portal parameter $1 = '...'
+cv_api           | 2026-04-21 07:47:36,099 INFO sqlalchemy.engine.Engine UPDATE candidates SET full_name=$1,email=$2,last_updated_at=NOW() WHERE id=$3
+cv_api           | 2026-04-21 07:47:36,100 INFO sqlalchemy.engine.Engine [cached since 53.25s ago] ('data_engineer_cv_2.pdf', None, '03f9bcb5-f403-4962-8363-73c084e7b3a5')
+cv_api           | 2026-04-21 07:47:36,100 INFO sqlalchemy.engine.Engine UPDATE cv_versions SET parsed_data=CAST($1 AS jsonb),
+cv_api           |                     parse_confidence=$2,ingestion_status='done',processed_at=NOW() WHERE id=$3
+cv_api           | 2026-04-21 07:47:36,101 INFO sqlalchemy.engine.Engine [cached since 53.25s ago] ('{"full_name": null, "email": null, "phone": null, "linkedin_url": null, "location": null, "technical_skills": [], "soft_skills": [], "domain_expertis ... (83 characters truncated) ... total_years_exp": null, "cv_summary": null, "parse_confidence": 0.2, "parse_warnings": ["LLM extraction: Expecting value: line 1 column 1 (char 0)"]}', 0.2, 'b6b849bf-2381-46fa-893e-dde2a1c7ea23')
+cv_api           | 2026-04-21 07:47:36,101 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | 2026-04-21 07:47:36,111 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:36,112 INFO sqlalchemy.engine.Engine SELECT embedding::text FROM jobs WHERE id=$1
+cv_api           | 2026-04-21 07:47:36,112 INFO sqlalchemy.engine.Engine [cached since 53.25s ago] ('21edf577-d271-4177-9c35-9caef29eda85',)
+cv_api           | 2026-04-21 07:47:36,128 INFO sqlalchemy.engine.Engine UPDATE cv_versions SET embedding=$1 WHERE id=$2
+cv_api           | 2026-04-21 07:47:36,128 INFO sqlalchemy.engine.Engine [cached since 53.25s ago] ('[]', 'b6b849bf-2381-46fa-893e-dde2a1c7ea23')
+cv_api           | 2026-04-21 07:47:36,132 INFO sqlalchemy.engine.Engine ROLLBACK
+cv_api           | {"agent": "matching", "correlation_id": "e6bf82e4-20d7-46bf-9ccb-ceac4f810c86", "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: vector must have at least 1 dimension\n[SQL: UPDATE cv_versions SET embedding=$1 WHERE id=$2]\n[parameters: ('[]', 'b6b849bf-2381-46fa-893e-dde2a1c7ea23')]\n(Background on this error at: https://sqlalche.me/e/20/dbapi)", "duration_ms": 20, "event": "agent_failed", "level": "error", "timestamp": "2026-04-21T07:47:36.132662Z"}
+cv_api           | 2026-04-21 07:47:36,133 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:36,133 INFO sqlalchemy.engine.Engine INSERT INTO audit_logs
+cv_api           |                     (correlation_id,event_type,actor,event_data,outcome,duration_ms,error_message)
+cv_api           |                     VALUES ($1,$2,$3,CAST($4 AS jsonb),$5,$6,$7)
+cv_api           | 2026-04-21 07:47:36,133 INFO sqlalchemy.engine.Engine [cached since 53.29s ago] ('e6bf82e4-20d7-46bf-9ccb-ceac4f810c86', 'agent:matching', 'matching', '{"keys": ["cv_version_id", "job_id", "candidate_id", "parsed_cv", "job_description", "jd_requirements"]}', 'failure', 20, "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: vector must have at least 1 dimension\n[SQL: UPDATE cv_version ... (7 characters truncated) ... mbedding=$1 WHERE id=$2]\n[parameters: ('[]', 'b6b849bf-2381-46fa-893e-dde2a1c7ea23')]\n(Background on this error at: https://sqlalche.me/e/20/dbapi)")
+cv_api           | 2026-04-21 07:47:36,134 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | {"correlation_id": "e6bf82e4-20d7-46bf-9ccb-ceac4f810c86", "error": "(sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.DataError'>: vector must have at least 1 dimension\n[SQL: UPDATE cv_versions SET embedding=$1 WHERE id=$2]\n[parameters: ('[]', 'b6b849bf-2381-46fa-893e-dde2a1c7ea23')]\n(Background on this error at: https://sqlalche.me/e/20/dbapi)", "event": "matching_failed", "level": "error", "timestamp": "2026-04-21T07:47:36.135950Z"}
+cv_api           | 2026-04-21 07:47:36,136 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:36,136 INFO sqlalchemy.engine.Engine UPDATE cv_versions SET ingestion_status='failed' WHERE id=$1
+cv_api           | 2026-04-21 07:47:36,136 INFO sqlalchemy.engine.Engine [cached since 53.25s ago] ('b6b849bf-2381-46fa-893e-dde2a1c7ea23',)
+cv_api           | 2026-04-21 07:47:36,137 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | 2026-04-21 07:47:51,105 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:51,106 INFO sqlalchemy.engine.Engine SELECT 1
+cv_api           | 2026-04-21 07:47:51,106 INFO sqlalchemy.engine.Engine [cached since 604.9s ago] ()
+cv_api           | 2026-04-21 07:47:51,107 INFO sqlalchemy.engine.Engine ROLLBACK
+
+cv_ollama        | [GIN] 2026/04/21 - 07:47:51 | 200 |     565.697µs |      172.18.0.4 | GET      "/api/tags"
+
+
+
+
+cv_api           | INFO:     127.0.0.1:52342 - "GET /health HTTP/1.1" 200 OK
+cv_api           | 2026-04-21 07:47:51,821 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:51,822 INFO sqlalchemy.engine.Engine SELECT id,title,department,location,is_active,created_at,requirements FROM jobs WHERE is_active=TRUE ORDER BY created_at DESC
+cv_api           | 2026-04-21 07:47:51,822 INFO sqlalchemy.engine.Engine [cached since 261.2s ago] ()
+cv_api           | 2026-04-21 07:47:51,826 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | INFO:     172.18.0.5:50530 - "GET /api/v1/jobs/ HTTP/1.1" 200 OK
+cv_api           | 2026-04-21 07:47:51,844 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:51,845 INFO sqlalchemy.engine.Engine 
+cv_api           |         SELECT s.*,
+cv_api           |                c.full_name, c.email, c.phone, c.is_returning,
+cv_api           |                cv.original_filename, cv.parse_confidence,
+cv_api           |                (SELECT COUNT(*) FROM anomalies a WHERE a.cv_version_id=s.cv_version_id) AS anomaly_count
+cv_api           |         FROM screenings s
+cv_api           |         JOIN candidates c  ON c.id  = s.candidate_id
+cv_api           |         JOIN cv_versions cv ON cv.id = s.cv_version_id
+cv_api           |         WHERE s.job_id=$1 AND s.final_score>=$2
+cv_api           |         ORDER BY s.final_score DESC
+cv_api           |         LIMIT $3
+cv_api           |     
+cv_api           | 2026-04-21 07:47:51,845 INFO sqlalchemy.engine.Engine [cached since 97.6s ago] ('21edf577-d271-4177-9c35-9caef29eda85', 0, 50)
+cv_api           | 2026-04-21 07:47:51,847 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | INFO:     172.18.0.5:50544 - "GET /api/v1/screenings/results/21edf577-d271-4177-9c35-9caef29eda85?min_score=0&limit=50 HTTP/1.1" 200 OK
+cv_api           | 2026-04-21 07:47:51,854 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+cv_api           | 2026-04-21 07:47:51,854 INFO sqlalchemy.engine.Engine SELECT * FROM v_job_pipeline WHERE id=$1
+cv_api           | 2026-04-21 07:47:51,855 INFO sqlalchemy.engine.Engine [cached since 111.2s ago] ('21edf577-d271-4177-9c35-9caef29eda85',)
+cv_api           | 2026-04-21 07:47:51,857 INFO sqlalchemy.engine.Engine COMMIT
+cv_api           | INFO:     172.18.0.5:50560 - "GET /api/v1/jobs/21edf577-d271-4177-9c35-9caef29eda85/pipeline HTTP/1.1" 200 OK
