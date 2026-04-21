@@ -1,0 +1,232 @@
+🚀 MASTER PROMPT (Zoho-like CV Screening System Builder)
+
+You can paste this into Claude, GPT-4.1, or any coding agent.
+
+🧠 PROMPT
+
+You are a Principal AI Systems Architect + Senior Full Stack Engineer.
+
+Your task is to redesign and upgrade an existing CV screening system into a Zoho Recruit-like Applicant Tracking System (ATS) with strong focus on:
+
+UI/UX similar to Zoho Recruit (enterprise ATS style)
+High-performance CV screening (reduce current 12 minutes for 3 CVs → under 1 minute target)
+Explainable AI scoring system
+Robust handling of negative and edge cases
+Scalable architecture using modern stack
+Actionable analytics and recruiter intelligence
+🧱 EXISTING STACK (DO NOT CHANGE)
+
+You MUST use the following stack:
+
+Frontend: Streamlit
+Backend: FastAPI
+Database: PostgreSQL
+Vector DB: pgvector
+LLM: Ollama models
+Deployment: Docker + Docker Compose
+🎯 CORE OBJECTIVE
+
+Build a Zoho Recruit-like ATS system, but:
+
+Must include:
+1. Candidate Screening Engine
+
+Each CV must be evaluated against a Job Description (JD) using:
+
+Semantic relevance score
+Skill match score
+Experience match score
+Seniority alignment score
+Negative penalty score (VERY IMPORTANT)
+2. Score System (Explainable AI)
+
+Each candidate MUST get:
+
+Final Score (0–100 capped strictly)
+
+Breakdown:
+
+Relevance Score (embedding similarity)
+Skill Match Score (rule-based + LLM extraction)
+Experience Score (years vs JD requirement)
+Semantic Understanding Score (LLM reasoning)
+Penalty Score (missing critical requirements)
+
+🚨 IMPORTANT:
+
+Score MUST NEVER exceed 100
+System MUST penalize missing skills heavily
+System MUST handle “bad fit CVs” correctly (low score, not inflated)
+3. Explainability Layer (CRITICAL)
+
+For every candidate, generate:
+
+“Why Selected”
+matched skills
+experience fit
+semantic similarity reasons
+“Why Rejected”
+missing skills
+experience gap
+wrong domain mismatch
+weak semantic alignment
+4. Zoho-like UI (Streamlit)
+
+UI must include:
+
+Dashboard
+total candidates
+shortlisted count
+rejected count
+processing time metrics
+Pipeline View (Kanban style)
+New
+Screening
+Shortlisted
+Interview
+Rejected
+Candidate Profile Page
+
+Must show:
+
+Resume preview
+AI summary
+Score breakdown (visual bars)
+Why selected / rejected
+Skill gap analysis
+Timeline of actions
+Analytics Page (VERY IMPORTANT)
+
+Include:
+
+Candidate score distribution graph
+Hiring funnel conversion
+Processing time per CV
+Top matching skills heatmap
+Rejection reasons frequency chart
+
+Use:
+
+matplotlib / plotly charts
+⚡ PERFORMANCE REQUIREMENTS (CRITICAL)
+
+Current system: 12 minutes for 3 CVs ❌
+
+Target:
+
+3 CVs → under 60–90 seconds
+Batch processing enabled
+Async processing mandatory
+
+You MUST implement:
+
+1. Parallel Processing
+
+Use:
+
+asyncio.gather()
+background tasks
+2. LLM Optimization
+Reduce prompt tokens
+Use smaller Ollama model (phi3 / gemma 2b preferred)
+Cache repeated embeddings
+3. Pipeline Optimization
+
+Split into stages:
+
+Fast filtering (rule-based)
+Embedding match
+LLM reasoning only for top candidates
+🧪 NEGATIVE SCENARIO TESTING (MANDATORY)
+
+System MUST handle:
+
+Non-tech CV → senior data engineer job → low score
+Keyword stuffing CV → penalized
+Empty / generic CV → rejected
+Mismatched domain CV → correctly flagged
+
+Include test cases:
+
+admin CV vs data engineer JD
+fresher CV vs senior role
+irrelevant CV with buzzwords
+📊 SCORING TRANSPARENCY RULES
+
+AI MUST output:
+
+formula used
+weights used
+penalties applied
+final reasoning trace
+
+Example:
+
+Final Score = 42/100
+
+Reason:
+- Skill match: 20%
+- Experience mismatch: -15%
+- Missing Python, SQL: -30 penalty
+- Semantic relevance: 35%
+📁 EXPORT FEATURE (VERY IMPORTANT)
+
+Each candidate must have downloadable:
+
+Excel Profile Report
+
+Include:
+
+Candidate name
+Score breakdown
+Recommendation (Selected / Rejected / Maybe)
+Skill gaps
+Full explanation
+Timeline history of score changes
+🧠 INTELLIGENT AI BEHAVIOR
+
+AI must:
+
+reason like a recruiter + engineer
+not rely only on embeddings
+combine rules + semantic + LLM
+avoid false positives (IMPORTANT)
+🏗️ ARCHITECTURE REQUIREMENTS
+
+System must include:
+
+FastAPI service layer
+CV ingestion pipeline
+pgvector similarity search
+Redis (optional caching recommended)
+Async workers
+Streamlit frontend dashboard
+Docker-compose orchestration
+🧪 STRESS TEST REQUIREMENTS
+
+Generate:
+
+50 CV dataset
+mix of good / bad / irrelevant CVs
+measure:
+latency
+accuracy
+ranking stability
+🧾 OUTPUT REQUIRED
+
+Return:
+
+Full updated backend code
+Streamlit UI redesign
+Scoring engine redesign
+Database schema improvements
+Performance optimization changes
+Test cases + stress testing script
+Docker compose improvements
+⚠️ STRICT RULES
+Must be production-grade code
+Must be scalable
+Must be explainable AI system
+Must not allow score inflation (>100)
+Must prioritize performance over complexity
+Must support negative test cases properly
