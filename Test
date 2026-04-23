@@ -1,0 +1,638 @@
+import streamlit as st
+import requests
+import pandas as pd
+import json
+import os
+
+st.set_page_config(
+page_title=“High-Level Insights · TalentScan AI”,
+page_icon=“🎯”,
+layout=“wide”
+)
+
+API_BASE = os.getenv(“API_URL”, “http://localhost:8000”)
+API = f”{API_BASE}/api/v1”
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
+
+st.markdown(”””
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
+.stApp { background: #080b12 !important; }
+section[data-testid="stSidebar"] { background: #0b0e17 !important; border-right: 1px solid #161d2e !important; }
+.block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1500px; }
+header { background: transparent !important; }
+h1,h2,h3,h4 { font-family: 'Syne', sans-serif !important; color: #eef2ff !important; }
+
+.page-title { font-family:'Syne',sans-serif; font-size:1.7rem; font-weight:800; color:#eef2ff; }
+.page-sub   { font-size:0.78rem; color:#3d4a65; margin-top:4px; }
+.section-hdr {
+  font-family:'Syne',sans-serif; font-size:0.72rem; font-weight:700;
+  color:#3d4a65; text-transform:uppercase; letter-spacing:2px; margin:1.4rem 0 0.6rem;
+}
+
+/* KPI cards */
+.kpi-card {
+  background:#0d1220; border:1px solid #161d2e; border-radius:14px;
+  padding:1.1rem 1rem; text-align:center; position:relative; overflow:hidden;
+}
+.kpi-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:3px;
+  background: var(--accent, #00c2ff); border-radius:14px 14px 0 0;
+}
+.kpi-val { font-family:'Syne',sans-serif; font-size:2rem; font-weight:800; }
+.kpi-lbl { font-size:0.7rem; color:#3d4a65; text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
+.kpi-sub { font-size:0.7rem; color:#4a5568; margin-top:2px; }
+
+/* Chart tab buttons */
+.tab-bar {
+  display:flex; gap:0; background:#0d1220; border:1px solid #161d2e;
+  border-radius:12px; padding:4px; margin-bottom:1rem; width:fit-content;
+}
+.tab-btn {
+  padding:7px 18px; border-radius:8px; border:none; cursor:pointer;
+  font-size:0.75rem; font-weight:600; background:transparent; color:#3d4a65;
+  transition: all 0.2s; font-family:'DM Sans',sans-serif;
+}
+.tab-btn.active { background:#161d2e; color:#eef2ff; }
+
+/* Chart card */
+.chart-card {
+  background:#0d1220; border:1px solid #161d2e; border-radius:14px;
+  padding:1.2rem; height:100%;
+}
+.chart-title { font-size:0.75rem; font-weight:700; color:#3d4a65; text-transform:uppercase;
+               letter-spacing:1.5px; margin-bottom:1rem; }
+
+/* Donut label */
+.donut-legend { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.donut-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:3px; }
+
+/* Candidate table */
+.tbl-wrap {
+  background:#0d1220; border:1px solid #161d2e; border-radius:14px;
+  overflow:hidden;
+}
+.tbl-header {
+  background:#0b0e17; padding:0.9rem 1.2rem;
+  border-bottom:1px solid #161d2e; display:flex; align-items:center;
+  justify-content:space-between;
+}
+.tbl-head-label { font-family:'Syne',sans-serif; font-size:0.85rem; font-weight:700; color:#eef2ff; }
+.tbl-count { font-size:0.72rem; color:#3d4a65; }
+
+.tbl-row {
+  display:grid;
+  grid-template-columns: 40px 200px 80px 70px 80px 100px 1fr 110px 100px;
+  gap:0; align-items:center; padding:0.7rem 1rem;
+  border-bottom:1px solid #0f1624; transition:background 0.15s;
+}
+.tbl-row:hover { background:#0f1828; }
+.tbl-row.selected { background:rgba(0,194,255,0.05); }
+.tbl-col-hdr {
+  display:grid;
+  grid-template-columns: 40px 200px 80px 70px 80px 100px 1fr 110px 100px;
+  gap:0; align-items:center; padding:0.55rem 1rem;
+  background:#080b12; border-bottom:1px solid #161d2e;
+}
+.tbl-hdr-cell { font-size:0.65rem; font-weight:700; color:#3d4a65;
+                text-transform:uppercase; letter-spacing:1.5px; }
+
+/* Score ring inline */
+.score-mini {
+  width:40px; height:40px; border-radius:50%; border:2.5px solid;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Syne',sans-serif; font-size:0.75rem; font-weight:800;
+}
+
+/* Status chip */
+.chip { padding:2px 9px; border-radius:20px; font-size:0.65rem; font-weight:700;
+        letter-spacing:0.5px; text-transform:uppercase; white-space:nowrap; }
+
+/* Skill pill */
+.spill { display:inline-block; padding:2px 7px; border-radius:4px;
+         font-size:0.65rem; font-weight:600; margin:1px 2px 1px 0;
+         background:rgba(0,194,255,0.10); color:#00c2ff;
+         border:1px solid rgba(0,194,255,0.2); }
+
+/* CV link */
+.cv-link {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:4px 10px; border-radius:7px;
+  background:rgba(74,111,165,0.15); border:1px solid rgba(74,111,165,0.3);
+  color:#7ab0ff; font-size:0.68rem; font-weight:600;
+  text-decoration:none; white-space:nowrap;
+}
+.cv-link:hover { background:rgba(74,111,165,0.25); }
+
+/* Expanded row detail */
+.expand-detail {
+  background:#060a10; border-top:1px solid #0f1624;
+  padding:1rem 1.2rem; display:flex; gap:24px; flex-wrap:wrap;
+}
+.exp-block { min-width:160px; }
+.exp-label { font-size:0.65rem; color:#3d4a65; text-transform:uppercase;
+             letter-spacing:1px; margin-bottom:6px; }
+.score-seg-bg  { background:#161d2e; border-radius:4px; height:8px; margin-top:3px; }
+.score-seg-bar { height:8px; border-radius:4px; }
+
+/* Filter bar */
+.filter-bar {
+  background:#0d1220; border:1px solid #161d2e; border-radius:12px;
+  padding:0.8rem 1rem; margin-bottom:1rem;
+}
+
+/* Funnel bar */
+.funnel-row { margin-bottom:10px; }
+.funnel-label { display:flex; justify-content:space-between; font-size:0.72rem;
+                color:#4a5568; margin-bottom:4px; }
+.funnel-bg { background:#161d2e; border-radius:4px; height:22px; position:relative; overflow:hidden; }
+.funnel-fill { height:22px; border-radius:4px; }
+.funnel-pct { position:absolute; left:8px; top:50%; transform:translateY(-50%);
+              font-size:0.68rem; font-weight:700; color:#fff; }
+
+/* Heatmap pill */
+.heat-pill {
+  display:inline-block; padding:5px 11px; border-radius:6px; font-size:0.72rem;
+  font-weight:700; margin:3px; border:1px solid;
+}
+</style>
+
+“””, unsafe_allow_html=True)
+
+# ── Header ────────────────────────────────────────────────────────────────────
+
+st.markdown(”””
+
+<div class="page-title">🎯 High-Level Insights</div>
+<div class="page-sub">Quick-view scores · Filter candidates · Click "Details →" to open full evaluation</div>
+""", unsafe_allow_html=True)
+
+# ── Job Profile selector ──────────────────────────────────────────────────────
+
+try:
+jobs_resp = requests.get(f”{API}/jobs”, timeout=5)
+jobs = jobs_resp.json() if jobs_resp.ok else []
+except:
+jobs = []
+
+if not jobs:
+st.info(“No jobs found. Post a job and screen some CVs first.”)
+st.stop()
+
+job_map = {f”{j[‘title’]} (#{j[‘id’]})”: j[‘id’] for j in jobs}
+col_sel, _ = st.columns([4, 6])
+with col_sel:
+selected_label = st.selectbox(“🗂️ Job Profile”, list(job_map.keys()), label_visibility=“visible”)
+selected_job_id = job_map[selected_label]
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+
+try:
+resp = requests.get(f”{API}/screenings”, params={“job_id”: selected_job_id}, timeout=10)
+raw = resp.json() if resp.ok else []
+except:
+raw = []
+
+if not raw:
+st.info(“No screening results yet for this role.”)
+st.stop()
+
+df = pd.DataFrame(raw)
+df[“score”]     = pd.to_numeric(df.get(“composite_score”,    0), errors=“coerce”).fillna(0)
+df[“name”]      = df.get(“candidate_name”, “Unknown”)
+df[“status”]    = df.get(“status”, “unknown”)
+df[“exp”]       = pd.to_numeric(df.get(“years_experience”,   0), errors=“coerce”).fillna(0)
+df[“location”]  = df.get(“location”,           “”).fillna(””).astype(str)
+df[“gender”]    = df.get(“gender”,             “”).fillna(””).astype(str)
+df[“geo_area”]  = df.get(“geographical_area”,  “”).fillna(””).astype(str)
+df[“skill_pct”] = pd.to_numeric(df.get(“skill_match_pct”,    0), errors=“coerce”).fillna(0)
+df[“education”] = df.get(“education_level”,    “”).fillna(””).astype(str)
+df[“phone”]     = df.get(“phone”,              “”).fillna(””).astype(str)
+df[“nationality”]= df.get(“nationality”,       “”).fillna(””).astype(str)
+df[“cv_url”]    = df.get(“cv_url”, df.get(“cv_link”, “”)).fillna(””).astype(str)
+df[“skills_raw”]= df.get(“matched_skills”,     “”).astype(str)
+
+def parse_skills(val):
+if isinstance(val, list): return val
+try: return json.loads(val)
+except: return [s.strip() for s in str(val).split(”,”) if s.strip()] if val else []
+
+df[“skills_list”] = df[“skills_raw”].apply(parse_skills)
+
+# ── FILTER BAR ───────────────────────────────────────────────────────────────
+
+st.markdown(’<div class="section-hdr">Filters</div>’, unsafe_allow_html=True)
+
+fc1,fc2,fc3,fc4,fc5,fc6 = st.columns(6)
+locs     = sorted([l for l in df[“location”].unique()    if l])
+genders  = sorted([g for g in df[“gender”].unique()     if g])
+geos     = sorted([g for g in df[“geo_area”].unique()   if g])
+statuses = sorted([s for s in df[“status”].unique()     if s])
+
+with fc1: sel_location = st.multiselect(“📍 Location”,       locs,     placeholder=“All”)
+with fc2: sel_gender   = st.multiselect(“👤 Gender”,         genders,  placeholder=“All”)
+with fc3: sel_geo      = st.multiselect(“🌍 Geo Area”,       geos,     placeholder=“All”)
+with fc4:
+e_min = int(df[“exp”].min()); e_max = max(int(df[“exp”].max()), e_min+1)
+sel_exp = st.slider(“📅 Experience (yrs)”, e_min, e_max, (e_min, e_max))
+with fc5: sel_status   = st.multiselect(“✅ Status”,         statuses, placeholder=“All”)
+with fc6: sel_score    = st.slider(“⭐ Min Score”, 0, 100, 0)
+
+mask = pd.Series([True]*len(df))
+if sel_location: mask &= df[“location”].isin(sel_location)
+if sel_gender:   mask &= df[“gender”].isin(sel_gender)
+if sel_geo:      mask &= df[“geo_area”].isin(sel_geo)
+if sel_status:   mask &= df[“status”].isin(sel_status)
+mask &= (df[“exp”] >= sel_exp[0]) & (df[“exp”] <= sel_exp[1])
+mask &= df[“score”] >= sel_score
+filtered = df[mask].sort_values(“score”, ascending=False).reset_index(drop=True)
+
+# ── KPI STRIP ─────────────────────────────────────────────────────────────────
+
+total      = len(filtered)
+shortlist  = (filtered[“status”]==“shortlisted”).sum()
+review_cnt = (filtered[“status”]==“review”).sum()
+rejected   = (filtered[“status”]==“rejected”).sum()
+avg_score  = filtered[“score”].mean() if total else 0
+top_score  = filtered[“score”].max()  if total else 0
+
+st.markdown(’<div class="section-hdr">Overview</div>’, unsafe_allow_html=True)
+k1,k2,k3,k4,k5 = st.columns(5)
+
+def kpi(col, val, label, color, sub=””, accent=None):
+ac = accent or color
+with col:
+st.markdown(f”””
+<div class="kpi-card" style="--accent:{ac}">
+<div class="kpi-val" style="color:{color}">{val}</div>
+<div class="kpi-lbl">{label}</div>
+{f’<div class="kpi-sub">{sub}</div>’ if sub else ‘’}
+</div>”””, unsafe_allow_html=True)
+
+kpi(k1, total,            “Total Candidates”,  “#eef2ff”, f”After filters”,  “#00c2ff”)
+kpi(k2, shortlist,        “Shortlisted”,       “#10b981”, f”{round(shortlist/total*100) if total else 0}% of total”, “#10b981”)
+kpi(k3, rejected,         “Rejected”,          “#ef4444”, “”,                “#ef4444”)
+kpi(k4, f”{avg_score:.0f}”, “Avg Score”,       “#3b82f6”, “”,                “#3b82f6”)
+kpi(k5, f”{top_score:.0f}”, “Top Score”,       “#a78bfa”, “”,                “#a78bfa”)
+
+# ── CHART TABS ────────────────────────────────────────────────────────────────
+
+st.markdown(’<div class="section-hdr">Analytics</div>’, unsafe_allow_html=True)
+
+tab_choice = st.radio(
+“Chart view”,
+[“📊 Overview”, “🔻 Pipeline Funnel”, “🔬 Skills Map”, “📍 Geo & Demographics”],
+horizontal=True, label_visibility=“collapsed”
+)
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def donut_svg(slices, cx=75, cy=75, r=55, hole=30):
+“”“Pure-SVG donut. slices = list of (label, count, color)”””
+total_v = sum(s[1] for s in slices) or 1
+cumAngle = -90
+paths = []
+for label, val, color in slices:
+angle = (val / total_v) * 360
+if angle == 0: continue
+startRad = cumAngle * 3.14159/180
+endRad   = (cumAngle+angle) * 3.14159/180
+x1 = cx + r***import**(‘math’).cos(startRad)
+y1 = cy + r***import**(‘math’).sin(startRad)
+x2 = cx + r***import**(‘math’).cos(endRad)
+y2 = cy + r***import**(‘math’).sin(endRad)
+large = 1 if angle > 180 else 0
+xi1 = cx + hole***import**(‘math’).cos(startRad)
+yi1 = cy + hole***import**(‘math’).sin(startRad)
+xi2 = cx + hole***import**(‘math’).cos(endRad)
+yi2 = cy + hole***import**(‘math’).sin(endRad)
+d = f”M{xi1:.1f},{yi1:.1f} L{x1:.1f},{y1:.1f} A{r},{r} 0 {large} 1 {x2:.1f},{y2:.1f} L{xi2:.1f},{yi2:.1f} A{hole},{hole} 0 {large} 0 {xi1:.1f},{yi1:.1f} Z”
+paths.append(f’<path d="{d}" fill="{color}" opacity="0.9"/>’)
+cumAngle += angle
+legend = “”.join(
+f’<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:#4a5568">’
+f’<div style="width:8px;height:8px;border-radius:50%;background:{c};flex-shrink:0"></div>’
+f’<span style="color:#eef2ff">{l}</span><span style="color:#3d4a65;margin-left:auto">{v}</span></div>’
+for l,v,c in slices if v > 0
+)
+svg = f’<svg width="150" height="150" viewBox="0 0 150 150">{””.join(paths)}<circle cx="{cx}" cy="{cy}" r="{hole}" fill="#0d1220"/><text x="{cx}" y="{cy-4}" text-anchor="middle" fill="#eef2ff" font-size="14" font-weight="800" font-family="Syne,sans-serif">{total_v}</text><text x="{cx}" y="{cy+12}" text-anchor="middle" fill="#3d4a65" font-size="8">total</text></svg>’
+return f’<div style="display:flex;flex-direction:column;align-items:center;gap:10px">{svg}<div style="display:flex;flex-direction:column;gap:4px;width:140px">{legend}</div></div>’
+
+def hbar_chart(data, title=””):
+“”“data = list of (label, val, color)”””
+max_v = max(v for *,v,* in data) or 1
+rows = “”
+for label, val, color in data:
+pct = (val/max_v)*100
+rows += f”””
+<div style="margin-bottom:9px">
+<div style="display:flex;justify-content:space-between;margin-bottom:3px">
+<span style="font-size:0.7rem;color:#4a5568">{label}</span>
+<span style="font-size:0.7rem;color:#eef2ff;font-weight:700">{val}</span>
+</div>
+<div style="background:#161d2e;border-radius:4px;height:8px">
+<div style="width:{pct:.0f}%;height:8px;background:{color};border-radius:4px;transition:width 0.8s"></div>
+</div>
+</div>”””
+return f’<div><div style="font-size:0.72rem;font-weight:700;color:#3d4a65;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px">{title}</div>{rows}</div>’
+
+def score_distribution(scores):
+bins = {“0–24”:0,“25–49”:0,“50–74”:0,“75–89”:0,“90–100”:0}
+cols = {“0–24”:”#ef4444”,“25–49”:”#f59e0b”,“50–74”:”#3b82f6”,“75–89”:”#10b981”,“90–100”:”#a78bfa”}
+for s in scores:
+if s < 25: bins[“0–24”] += 1
+elif s < 50: bins[“25–49”] += 1
+elif s < 75: bins[“50–74”] += 1
+elif s < 90: bins[“75–89”] += 1
+else: bins[“90–100”] += 1
+max_v = max(bins.values()) or 1
+rows = “”
+for label, count in bins.items():
+pct = (count/max_v)*100
+rows += f”””
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+<div style="width:56px;text-align:right;font-size:0.68rem;color:#4a5568">{label}</div>
+<div style="flex:1;background:#161d2e;border-radius:4px;height:18px;position:relative;overflow:hidden">
+<div style="width:{pct:.0f}%;height:18px;background:{cols[label]};border-radius:4px"></div>
+<span style="position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#fff;font-weight:700">{count}</span>
+</div>
+</div>”””
+return f’<div><div style="font-size:0.72rem;font-weight:700;color:#3d4a65;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px">Score Distribution</div>{rows}</div>’
+
+# Exp bracket helper
+
+def exp_brackets(f):
+return [
+(“0–3 yrs”,  len(f[f[“exp”]<=3]),           “#60a5fa”),
+(“4–6 yrs”,  len(f[(f[“exp”]>=4)&(f[“exp”]<=6)]),  “#00c2ff”),
+(“7–9 yrs”,  len(f[(f[“exp”]>=7)&(f[“exp”]<=9)]),  “#a78bfa”),
+(“10+ yrs”,  len(f[f[“exp”]>=10]),           “#f59e0b”),
+]
+
+# Skill frequency
+
+all_skills = {}
+for sl in filtered[“skills_list”]:
+for s in sl:
+all_skills[s] = all_skills.get(s,0) + 1
+top_skills = sorted(all_skills.items(), key=lambda x: -x[1])[:8]
+SKILL_COLORS = [”#00c2ff”,”#a78bfa”,”#f59e0b”,”#10b981”,”#60a5fa”,”#f472b6”,”#34d399”,”#fb923c”]
+
+# ── CHART CONTENT ─────────────────────────────────────────────────────────────
+
+if “Overview” in tab_choice:
+c1,c2,c3 = st.columns(3)
+with c1:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Status Split</div>’, unsafe_allow_html=True)
+st.markdown(donut_svg([
+(“Shortlisted”, int(shortlist),  “#10b981”),
+(“Review”,      int(review_cnt), “#f59e0b”),
+(“Rejected”,    int(rejected),   “#ef4444”),
+]), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c2:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(hbar_chart(exp_brackets(filtered), “Experience Brackets”), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c3:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(score_distribution(filtered[“score”]), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+
+elif “Funnel” in tab_choice:
+c1,c2,c3 = st.columns(3)
+with c1:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Recruitment Funnel</div>’, unsafe_allow_html=True)
+total_all = len(df)
+funnel_rows = [
+(“CVs Received”,    total_all,                             “#60a5fa”),
+(“After AI Filter”, total,                                 “#00c2ff”),
+(“Shortlisted”,     int(shortlist),                        “#10b981”),
+(“To Interview”,    max(1,int(shortlist*0.6)),             “#f59e0b”),
+(“Offer Stage”,     max(1,int(shortlist*0.2)),             “#f472b6”),
+]
+html = “”
+for label, count, color in funnel_rows:
+pct = round((count/total_all)*100) if total_all else 0
+html += f”””
+<div class="funnel-row">
+<div class="funnel-label"><span>{label}</span><span style="color:#eef2ff;font-weight:700">{count}</span></div>
+<div class="funnel-bg">
+<div class="funnel-fill" style="width:{pct}%;background:{color}"></div>
+<div class="funnel-pct">{pct}%</div>
+</div>
+</div>”””
+st.markdown(html, unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c2:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Gender Split</div>’, unsafe_allow_html=True)
+st.markdown(donut_svg([
+(“Male”,   int((filtered[“gender”]==“Male”).sum()),   “#00c2ff”),
+(“Female”, int((filtered[“gender”]==“Female”).sum()), “#f472b6”),
+(“Other”,  int((~filtered[“gender”].isin([“Male”,“Female”])).sum()), “#a78bfa”),
+]), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c3:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Education Level</div>’, unsafe_allow_html=True)
+edu_counts = filtered[“education”].value_counts()
+st.markdown(donut_svg([
+(lbl, int(cnt), clr)
+for (lbl,cnt), clr in zip(edu_counts.items(), [”#a78bfa”,”#00c2ff”,”#10b981”,”#f59e0b”,”#60a5fa”])
+if cnt > 0
+]), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+
+elif “Skills” in tab_choice:
+c1,c2 = st.columns([1,1])
+with c1:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(hbar_chart(
+[(sk, cnt, SKILL_COLORS[i % len(SKILL_COLORS)]) for i,(sk,cnt) in enumerate(top_skills)],
+“Top Skills Across Candidates”
+), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c2:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Skill Coverage Heatmap</div>’, unsafe_allow_html=True)
+heat_html = “”
+for sk, cnt in top_skills:
+intensity = cnt / max(total, 1)
+alpha_bg  = 0.07 + intensity*0.45
+alpha_bd  = intensity*0.5
+color     = “#00c2ff” if intensity > 0.4 else “#4a5568”
+heat_html += f’<span class="heat-pill" style="background:rgba(0,194,255,{alpha_bg:.2f});color:{color};border-color:rgba(0,194,255,{alpha_bd:.2f})">{sk} <span style="opacity:0.6;font-size:0.65rem">{cnt}</span></span>’
+st.markdown(heat_html, unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+
+elif “Geo” in tab_choice:
+c1,c2,c3 = st.columns(3)
+loc_counts = filtered[“location”].value_counts()
+with c1:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(hbar_chart(
+[(loc, int(cnt), clr) for (loc,cnt),clr in zip(loc_counts.items(), [”#00c2ff”,”#a78bfa”,”#f59e0b”,”#10b981”,”#60a5fa”])],
+“Candidates by Location”
+), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+nat_counts = filtered[“nationality”].value_counts()
+with c2:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">Nationality Mix</div>’, unsafe_allow_html=True)
+st.markdown(donut_svg([
+(nat, int(cnt), clr)
+for (nat,cnt),clr in zip(nat_counts.head(5).items(), [”#00c2ff”,”#f59e0b”,”#a78bfa”,”#10b981”,”#60a5fa”])
+if cnt > 0
+]), unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+with c3:
+st.markdown(’<div class="chart-card">’, unsafe_allow_html=True)
+st.markdown(’<div class="chart-title">UAE Emiratisation Tracker</div>’, unsafe_allow_html=True)
+uae_count  = int((filtered[“nationality”]==“UAE”).sum())
+gcc_count  = int(filtered[“nationality”].isin([“UAE”,“Saudi”,“Bahraini”,“Qatari”,“Kuwaiti”,“Omani”]).sum())
+uae_pct    = round(uae_count/max(total,1)*100)
+gcc_pct    = round(gcc_count/max(total,1)*100)
+targets    = [(“UAE National”, uae_pct, 15,”#10b981”), (“GCC National”, gcc_pct, 25,”#00c2ff”)]
+trows = “”
+for label, pct, target, color in targets:
+met   = pct >= target
+bar_c = “#10b981” if met else “#ef4444”
+trows += f”””
+<div style="margin-bottom:14px">
+<div style="display:flex;justify-content:space-between;margin-bottom:4px">
+<span style="font-size:0.72rem;color:#4a5568">{label}</span>
+<span style="font-size:0.72rem;font-weight:700;color:{bar_c}">{pct}% / {target}% target</span>
+</div>
+<div style="background:#161d2e;border-radius:4px;height:9px">
+<div style="width:{min(pct,100)}%;height:9px;background:{bar_c};border-radius:4px"></div>
+</div>
+</div>”””
+if uae_pct < 15:
+trows += ‘<div style="margin-top:10px;padding:8px 10px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;font-size:0.7rem;color:#ef4444">⚠ Emiratisation below target — flag for HR</div>’
+st.markdown(trows, unsafe_allow_html=True)
+st.markdown(’</div>’, unsafe_allow_html=True)
+
+# ── TABLE VIEW ────────────────────────────────────────────────────────────────
+
+st.markdown(’<div class="section-hdr">Table View</div>’, unsafe_allow_html=True)
+
+def tier_color(s):
+if s>=75: return “#10b981”
+if s>=55: return “#3b82f6”
+if s>=35: return “#f59e0b”
+return “#ef4444”
+
+def status_chip_html(s):
+styles = {
+“shortlisted”: “background:#052e1c;color:#10b981;border:1px solid #065f3c”,
+“rejected”:    “background:#2d0a0a;color:#ef4444;border:1px solid #7f1d1d”,
+“review”:      “background:#1a1500;color:#f59e0b;border:1px solid #78350f”,
+}
+sty = styles.get(s.lower(), “background:#111827;color:#6b7280;border:1px solid #374151”)
+return f’<span class="chip" style="{sty}">{s.upper()}</span>’
+
+# Column headers
+
+st.markdown(”””
+
+<div class="tbl-wrap">
+<div class="tbl-col-hdr">
+  <div class="tbl-hdr-cell">#</div>
+  <div class="tbl-hdr-cell">Name</div>
+  <div class="tbl-hdr-cell">Exp</div>
+  <div class="tbl-hdr-cell">Gender</div>
+  <div class="tbl-hdr-cell">Location</div>
+  <div class="tbl-hdr-cell">Nationality</div>
+  <div class="tbl-hdr-cell">Skills</div>
+  <div class="tbl-hdr-cell">Status</div>
+  <div class="tbl-hdr-cell">CV Link</div>
+</div>
+""", unsafe_allow_html=True)
+
+if filtered.empty:
+st.markdown(’<div style="padding:1.5rem;text-align:center;color:#3d4a65;font-size:0.85rem">No candidates match current filters.</div>’, unsafe_allow_html=True)
+else:
+for i, row in filtered.iterrows():
+score   = row[“score”]
+tc      = tier_color(score)
+sk_html = “”.join(f’<span class="spill">{s}</span>’ for s in row[“skills_list”][:2])
+if len(row[“skills_list”]) > 2:
+sk_html += f’<span style="font-size:0.65rem;color:#3d4a65"> +{len(row[“skills_list”])-2}</span>’
+cv_btn  = f’<a class=“cv-link” href=”{row[“cv_url”]}” target=”_blank”>📄 View CV</a>’ if row[“cv_url”] else ‘<span style="font-size:0.68rem;color:#3d4a65">–</span>’
+exp_str = f’{row[“exp”]:.0f} yrs’ if row[“exp”] > 0 else “–”
+
+```
+    st.markdown(f"""
+    <div class="tbl-row">
+      <div style="font-size:0.72rem;color:#3d4a65;font-weight:700">#{i+1}</div>
+      <div>
+        <div style="font-size:0.82rem;font-weight:600;color:#eef2ff">{row['name']}</div>
+        <div style="font-size:0.68rem;color:#3d4a65">{row['phone'] or ''}</div>
+      </div>
+      <div style="font-size:0.78rem;color:#eef2ff;font-weight:700">{exp_str}</div>
+      <div style="font-size:0.75rem;color:#4a5568">{row['gender'] or '–'}</div>
+      <div style="font-size:0.75rem;color:#4a5568">{row['location'] or '–'}</div>
+      <div style="font-size:0.75rem;color:#4a5568">{row['nationality'] or '–'}</div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center">{sk_html}</div>
+      <div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:36px;height:36px;border-radius:50%;border:2.5px solid {tc};
+            display:flex;align-items:center;justify-content:center;
+            font-size:0.72rem;font-weight:800;color:{tc};flex-shrink:0">
+            {score:.0f}
+          </div>
+          {status_chip_html(row['status'])}
+        </div>
+      </div>
+      <div>{cv_btn}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Expand/detail button
+    col_gap, col_det = st.columns([9.2, 0.8])
+    with col_det:
+        if st.button("Details →", key=f"ins_{i}_{row.get('id',i)}"):
+            st.session_state["detail_candidate_id"] = row.get("id")
+            st.session_state["detail_job_id"] = selected_job_id
+            st.switch_page("pages/04_Screening_Results.py")
+```
+
+st.markdown(’</div>’, unsafe_allow_html=True)
+
+# ── EXPORT ────────────────────────────────────────────────────────────────────
+
+st.markdown(’<div class="section-hdr">Export</div>’, unsafe_allow_html=True)
+ex1, _ = st.columns([2,8])
+with ex1:
+if st.button(“📊 Export as Excel”, use_container_width=True):
+try:
+r = requests.get(f”{API}/export/{selected_job_id}/excel”, timeout=15)
+if r.ok:
+st.download_button(
+“📥 Download Excel”,
+data=r.content,
+file_name=f”insights_{selected_job_id}.xlsx”,
+mime=“application/vnd.openxmlformats-officedocument.spreadsheetml.sheet”
+)
+else:
+st.error(“Export failed.”)
+except Exception as e:
+st.error(f”Export error: {e}”)
+
+# ── Status × Location matrix ──────────────────────────────────────────────────
+
+if total >= 3:
+st.markdown(’<div class="section-hdr">Status Breakdown by Location</div>’, unsafe_allow_html=True)
+loc_grouped = filtered.groupby([“location”,“status”]).size().unstack(fill_value=0)
+if not loc_grouped.empty:
+st.dataframe(
+loc_grouped.style.background_gradient(cmap=“Blues”, axis=None).format(”{:.0f}”),
+use_container_width=True
+)
